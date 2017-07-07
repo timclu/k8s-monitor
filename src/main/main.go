@@ -1,90 +1,71 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"os"
+	k8s "cmd/k8s"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+
+	"fmt"
+	"os"
 	// Uncomment the following line to load the gcp plugin (only required to authenticate against GKE clusters).
 	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 )
 
 func main() {
-
 	commonConfigName := "common-config"
 	verLable := "common-config-ver"
 	statusLable := "common-config-status"
 	namespace := "tyd"
+	defaultPhase := []string{"default", "alpha"}
 
-	phase := map[string]string{
-		"alpha": "./config",
-		"beta":  "./b_config",
-		"prod":  "./p_config",
-	}
-
+	//phase selection
 	argsWithProg := os.Args
-	fmt.Println("[ConfigMap Monitoring]")
-	kubeconfig := flag.String("kubeconfig", phase[argsWithProg[1]], "absolute path to the kubeconfig file")
-	flag.Parse()
-	// uses the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	if err != nil {
-		panic(err.Error())
-	}
-	// creates the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
+	if len(argsWithProg) < 2 {
+		fmt.Printf("Set phase to default stage alpha\n")
+		argsWithProg = defaultPhase
+	} else if argsWithProg[1] != "alpha" || argsWithProg[1] != "beta" || argsWithProg[1] != "prod" {
+		fmt.Printf("Phase should be one of [alpha, beta, prod]\nSet phase to default value alpha\n")
+		argsWithProg = defaultPhase
 	}
 
-	commonConfig, err := clientset.CoreV1().ConfigMaps(namespace).Get(commonConfigName, metav1.GetOptions{})
-	if err != nil {
-		panic(err.Error())
-	}
+	//get k8s client
+	fmt.Println("[ConfigMap Monitoring]")
+	clientset := k8s.SetClientset(argsWithProg[1])
+
+	//get configmap by name
+	commonConfig := k8s.GetConfigmap(clientset, namespace, commonConfigName, verLable)
 	configName := commonConfig.GetName()
 	configVer := commonConfig.Labels[verLable]
 	fmt.Printf("ConfigMap:\n\t%s: %s\n", configName, configVer)
 
-	result, err := clientset.ExtensionsV1beta1().Deployments(namespace).List(metav1.ListOptions{})
-	if err != nil {
-		panic(err.Error())
-	}
-	for i := range result.Items {
-		status := result.Items[i].Labels[statusLable]
-		if status == "enabled" {
-			name := result.Items[i].GetName()
-			ver := result.Items[i].Labels[verLable]
-			var podName []string
+	//get all deployments list
+	deploymentList := k8s.GetDeploymentList(clientset, namespace)
+	deployInfo := k8s.ConfigVerCompared(deploymentList, configVer, statusLable, verLable)
 
-			fmt.Println("************************************")
-			fmt.Printf("%s:\n", name)
-
-			podResult, err := clientset.Core().Pods(namespace).List(
+	//List the config info
+	for i := range deployInfo {
+		name := deployInfo[i].Name
+		ver := deployInfo[i].Ver
+		fmt.Println("************************************")
+		fmt.Printf("%s:\n", name)
+		fmt.Printf("\tcommon-config-ver:%s", ver)
+		if ver == configVer {
+			fmt.Printf(" (Version Match!)\n")
+		} else {
+			fmt.Printf(" (Version not match)\n")
+			fmt.Printf("\tPod List:\n")
+			podResult := k8s.GetPod(
+				clientset,
+				namespace,
 				metav1.ListOptions{
 					LabelSelector: "name=" + name,
 				})
-			if err != nil {
-				panic(err.Error())
-			}
-
-			podName = make([]string, len(podResult.Items))
-
+			podName := make([]string, len(podResult.Items))
 			for j := range podResult.Items {
 				podName[j] = podResult.Items[j].GetName()
-				fmt.Printf("\tpod[%d]:%s\n", j+1, podName[j])
-			}
-
-			fmt.Printf("\tcommon-config-ver:%s\n", ver)
-			if ver == configVer {
-				fmt.Printf("\t(Version Match!)\n")
-			} else {
-				fmt.Printf("\t(Version not match!)\n")
-				fmt.Printf("\t#start to restart the pod#\n")
+				fmt.Printf("\t\tpod[%d]:%s\n", j+1, podName[j])
 			}
 		}
 	}
-	//options := metav1.DeleteOptions{}
+
 }
