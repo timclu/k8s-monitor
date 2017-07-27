@@ -23,8 +23,10 @@ func main() {
 	if len(argsWithProg) < 2 {
 		fmt.Printf("Set phase to default stage alpha\n")
 		argsWithProg = defaultPhase
-	} else if argsWithProg[1] != "alpha" || argsWithProg[1] != "beta" || argsWithProg[1] != "prod" {
-		fmt.Printf("Phase should be one of [alpha, beta, prod]\nSet phase to default value alpha\n")
+	} 
+
+	if(argsWithProg[1]!="alpha" && argsWithProg[1]!="beta" && argsWithProg[1]!="prod"){
+		fmt.Printf("phase not correct!!!\n")
 		argsWithProg = defaultPhase
 	}
 
